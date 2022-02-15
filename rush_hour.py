@@ -1,139 +1,162 @@
 import sys
 import z3
 
-if __name__ == '__main__':
-    # read the file provided as command line argument
-    file = list(map(str.strip, open("inp.txt", "r").readlines()))
-    n, k = map(int, file[0].split(','))
-    red_car = list(map(int, file[1].split(',')))
-    cars = []
-    mines = []
-    initial_car_pos = {}
-    for lines in file[2:]:
-        if lines.split(',')[0] != '2':
-            cars.append(list(map(int, lines.split(','))))
+s = z3.Solver()
+# read the file provided as command line argument
+file = list(map(str.strip, open(sys.argv[1], "r").readlines()))
+n, timeout = map(int, file[0].split(','))
+red_car = list(map(int, file[1].split(',')))
+cars = []
+mines = []
+car_vars = []
+
+
+class Car:
+    def __init__(self, typ, ini_x, ini_y, id_):
+        global s, n, timeout
+        # typ =0 vertical
+        # typ =1 or 2 horizontal
+        self.typ = typ
+        self.row = ini_x
+        self.col = ini_y
+        self.var = [z3.Int(f'{t}_{typ}_{id_}_{ini_x}_{ini_y}') for t in range(timeout + 1)]
+        # for var b/w 0 to n-1
+        # print(self.var)
+        # print(k, n)
+        for i in range(timeout + 1):
+            s.add(self.var[i] >= 0, self.var[i] <= n - 2)
+        for i in range(timeout):
+            s.add(self.var[i + 1] - self.var[i] <= 1)
+            s.add(self.var[i] - self.var[i + 1] <= 1)
+
+        # goal
+        if typ == 2:
+            s.add(z3.Or([self.var[i] == n - 2 for i in range(timeout + 1)]))
+
+        if typ == 0:
+            s.add(self.var[0] == ini_x)
         else:
-            mines.append(list(map(int, lines.split(',')))[1:])
-    print("check1")
-    # k -0 vertical k-1 horizontal k-2 red
-    vars = [[[[[],[],[]] for j in range(n)]for _ in range(n)] for l in range(0, k+1)]
-    s = z3.Solver()
-    initial_car_pos['*'] = [red_car[0],red_car[1]]
-    for time in range(0, k+1):
-        all_pos = []
-        this_car_pos = []
-        for i in range(n):
-            for j in range(n):
-                vars[time][i][j][2]=z3.Bool(f"*_2_{i}_{j}_{time}")   
-                this_car_pos.append((vars[time][i][j][2],1))
-        for i in range(n):
-            for j in range(n):
-                if time==0 and i!=red_car[0] and j!=red_car[1]:
-                    s.add(z3.Not(vars[time][i][j][2]))
-                if j < n-1:
-                    # all_pos.append((z3.And(vars[f"*_2_{i}_{j}_{time}"], vars[f"*_2_{i}_{j+1}_{time}"]),1))
-                    all_pos.append((z3.And(vars[time][i][j][2],vars[time][i][j+1][2]), 1))
-        if time==0:
-            s.add(vars[time][red_car[0]][red_car[1]][2])
-        s.add(z3.PbEq(tuple(all_pos), 1))
-        s.add(z3.PbEq(tuple(this_car_pos), 2))
-    print("check2")
-    
-    # k -0 vertical k-1 horizontal k-2 red
+            s.add(self.var[0] == ini_y)
 
-    for id, car in enumerate(cars):
-        initial_car_pos[id] = [car[1],car[2]]
-        for time in range(0, k+1):
-            all_pos = []
-            my_pos=0
-            this_car_pos = []
-            for i in range(n):
-                for j in range(n):
-                    my_pos = len(vars[time][i][j][car[0]])
-                    vars[time][i][j][car[0]].append(z3.Bool(f"{id}_{car[0]}_{i}_{j}_{time}"))
-                    this_car_pos.append((vars[time][i][j][car[0]][my_pos],1))
-            if time==0:
-                s.add(vars[time][car[1]][car[2]][car[0]][my_pos])
-            for i in range(n):
-                for j in range(n):
-                    if time==0 and i!=car[1] and j!=car[2]:
-                        s.add(z3.Not(vars[time][i][j][car[0]][my_pos]))
-                    if car[0] == 0:
-                        if i < n-1:
-                            # print(vars[time][i][j][car[0]])
-                            # print(vars[time][i+1][j][car[0]])
-                            all_pos.append((z3.And(vars[time][i][j][car[0]][my_pos], vars[time][i+1][j][car[0]][my_pos]), 1))
+
+for lines in file[2:]:
+    if lines.split(',')[0] != '2':
+        k = len(cars)
+        cars.append(list(map(int, lines.split(','))))
+        car_vars.append(Car(cars[k][0], cars[k][1], cars[k][2], k))
+    else:
+        mines.append(list(map(int, lines.split(',')))[1:])
+
+car_vars.append(Car(2, red_car[0], red_car[1], '*'))
+
+for mine in mines:
+    for car in car_vars:
+        if car.typ == 0 and car.col == mine[1]:
+            [s.add(z3.Not(z3.Or(car.var[i] == mine[0], car.var[i] + 1 == mine[0]))) for i in range(timeout + 1)]
+        elif (car.typ == 1 or car.typ == 2) and car.row == mine[0]:
+            [s.add(z3.Not(z3.Or(car.var[i] == mine[1], car.var[i] + 1 == mine[1]))) for i in range(timeout + 1)]
+
+# avoid collision between horizontal and vertical
+for i in range(len(car_vars)):
+    for j in range(i + 1, len(car_vars)):
+        car1 = car_vars[i]
+        car2 = car_vars[j]
+        if car1 == car2:
+            continue
+        # both hor
+        if car1.typ != 0 and car2.typ != 0:
+            if car1.row == car2.row:
+                for t in range(timeout + 1):
+                    if car1.col < car2.col:
+                        s.add(car2.var[t] - car1.var[t] > 1)
                     else:
-                        if j < n-1:
-                            all_pos.append((z3.And(vars[time][i][j][car[0]][my_pos], vars[time][i][j+1][car[0]][my_pos]),1))
-            # 2 adjacent positions true for for each car at all instants # adjacent ensured
-            s.add(z3.PbEq(tuple(all_pos), 1))
-            s.add(z3.PbEq(tuple(this_car_pos), 2))
-    print("check3")
-    
-    goal = []
-    for time in range(0, k+1):
-        goal.append(z3.And(vars[time][red_car[0]][n-1][2],vars[time][red_car[0]][n-2][2]))
-    s.add(z3.Or(goal))
+                        s.add(car2.var[t] - car1.var[t] < -1)
+        if car1.typ == 0 and car2.typ == 0:
+            if car1.col == car2.col:
+                for t in range(timeout + 1):
+                    if car1.row < car2.row:
+                        s.add(car2.var[t] - car1.var[t] > 1)
+                    else:
+                        s.add(car2.var[t] - car1.var[t] < -1)
 
-    # no car at mines ever
-    for mine in mines:
-        for time in range(0, k+1):
-            i = mine[0]
-            j = mine[1]
-            s.add(z3.Not(vars[time][i][j][2]))
-            for type in range(2):
-                for k_ in vars[time][i][j][type]:
-                    s.add(z3.Not(k_))
+        if car1.typ != 0 and car2.typ == 0:
+            for t in range(timeout + 1):
+                i1 = car1.row
+                i2 = car1.var[t]
 
-    # two cars never at same position at any instant
-    for time in range(0, k+1):
-        for i in range(n):
-            for j in range(n):
-                clauses = [vars[time][i][j][2]]
-                for type in range(2):
-                    for k_ in vars[time][i][j][type]:
-                        clauses.append(k_)
-                s.add(z3.AtMost(*clauses, 1))
-    print("check4")
-    
-    # ensure exactly 1 car moves by 1 unit at each instant (given red has not reached n-1)
-    for time in range(1, k+1):
-        clauses = []
-        change_instant=[]
-        for i in range(n):
-            for j in range(n):
-                change_instant.append((z3.Xor(vars[time-1][i][j][2], vars[time][i][j][2]),1))
-                if 0<j<n-1:
-                    red_move = z3.And(vars[time-1][i][j-1][2],vars[time-1][i][j][2], vars[time][i][j][2],vars[time][i][j+1][2])
-                    red_move_back = z3.And(vars[time-1][i][j][2],vars[time-1][i][j+1][2], vars[time][i][j][2],vars[time][i][j-1][2])
-                    clauses.append((red_move,1))
-                    clauses.append((red_move_back,1))
-                for type in range(2):
-                    for k_ in range(len(vars[time][i][j][type])):
-                        change_instant.append((z3.Xor(vars[time-1][i][j][type][k_], vars[time][i][j][type][k_]),1))
-                        if type==0: # vertical
-                            if i<n-1:
-                                vert_move = z3.And(vars[time-1][i-1][j][type][k_],vars[time-1][i][j][type][k_], vars[time][i][j][type][k_] ,vars[time][i+1][j][type][k_])
-                                vert_move_back = z3.And(vars[time-1][i][j][type][k_],vars[time-1][i+1][j][type][k_], vars[time][i][j][type][k_] ,vars[time][i-1][j][type][k_])
-                                clauses.append((vert_move,1))
-                                clauses.append((vert_move_back,1))
-                        else:
-                            if j<n-1:
-                                hor_move = z3.And(vars[time-1][i][j-1][type][k_],vars[time-1][i][j][type][k_],vars[time][i][j][type][k_] ,vars[time][i][j+1][type][k_])
-                                hor_move_back = z3.And(vars[time-1][i][j][type][k_],vars[time-1][i][j+1][type][k_],vars[time][i][j][type][k_] ,vars[time][i][j-1][type][k_])
-                                clauses.append((hor_move,1))
-                                clauses.append((hor_move_back,1))
-        # s.add(z3.PbLe(tuple(clauses), 1))
-        s.add(z3.PbEq(clauses, 1))
-        s.add(z3.PbEq(change_instant, 2))
-    print("check5")
-        # print(clauses)
-    
+                j1 = car2.var[t]
+                j2 = car2.col
+                s.add(z3.Not(z3.Or(
+                    z3.And(i1 - j1 == 0,
+                           j2 - i2 == 0),
+                    z3.And(i1 - j1 == 0,
+                           j2 - i2 == 1),
+                    z3.And(i1 - j1 == 1,
+                           j2 - i2 == 0),
+                    z3.And(i1 - j1 == 1,
+                           j2 - i2 == 1)
+                )))
+        if car1.typ == 0 and car2.typ != 0:
+            for t in range(timeout + 1):
+                i1 = car1.var[t]
+                i2 = car1.col
+                j1 = car2.row
+                j2 = car2.var[t]
+                s.add(z3.Not(z3.Or(
+                    z3.And(i1 - j1 == 0,
+                           j2 - i2 == 0),
+                    z3.And(i1 - j1 == 0,
+                           j2 - i2 == -1),
+                    z3.And(i1 - j1 == -1,
+                           j2 - i2 == 0),
+                    z3.And(i1 - j1 == -1,
+                           j2 - i2 == -1)
+                )))
 
-    # vars= [[[[z3.Bool(f"{i}_{j}_{type}_{time}") for i in range(n)] for j in range(n)] for type in range(3)] for time in range(k)]
+# horizontal collides with vertical
 
-    # var_red = [[[z3.Bool(f"{cols}_{rows}_{time}") for cols in range(n)] for rows in range(n)] for time in range(k)]
-    # var_others = []
+# movement
+for time in range(1, timeout + 1):
+    clauses = []
+    for car in car_vars:
+        clauses.append((car.var[time] - car.var[time - 1] == 1, 1))
+        clauses.append((car.var[time - 1] - car.var[time] == 1, 1))
+    s.add(z3.PbEq(clauses, 1))
 
+if s.check() == z3.unsat:
+    print("unsat")
+    exit()
 
+# print(s.model())
+times = [[] for t in range(timeout + 1)]
+endtime = 0
+for i in s.model():
+    k = int(str(i).split('_')[0])
+    times[k].append(f"{'_'.join(str(i).split('_')[1:])}_{s.model()[i]}")
+
+for i in range(len(times)):
+    for kk in times[i]:
+        if str(kk).startswith('2') and str(kk).endswith(str(n - 2)):
+            endtime = i
+            break
+    if endtime != 0:
+        break
+
+# print(*times, sep='\n')
+for t in range(endtime):
+    a, b = 0, 0
+    for i in times[t]:
+        if i not in times[t + 1]:
+            if i.split('_')[0] != '0':
+                a = int(i.split('_')[2])
+                b = int(i.split('_')[4])
+            else:
+                a = int(i.split('_')[4])
+                b = int(i.split('_')[3])
+    for i in times[t + 1]:
+        if i not in times[t]:
+            if i.split('_')[0] != '0':
+                b = max(b, int(i.split('_')[4]))
+            else:
+                a = max(a, int(i.split('_')[4]))
+    print(a, b, sep=',')
